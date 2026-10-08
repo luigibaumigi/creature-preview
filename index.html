@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Animation Preview</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh;
+    background: #141021; color: #e8e2f5;
+    font: 15px/1.5 -apple-system, "SF Pro Text", Helvetica, sans-serif;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 28px; padding: 24px;
+  }
+  h1 {
+    font-size: 20px; font-weight: 600; letter-spacing: 0.04em;
+    margin: 0; color: #9b90b8;
+  }
+  canvas { display: block; border-radius: 12px; }
+  #state {
+    font-size: 22px; font-weight: 600; color: #ccb8e6;
+    min-height: 33px; text-align: center;
+  }
+</style>
+</head>
+<body>
+
+<h1>Animation Preview</h1>
+<canvas id="face"></canvas>
+<div id="state"></div>
+
+<script>
+'use strict';
+
+/* ============ Geometrie & Farben — 1:1 wie animation-overview.html ============ */
+const COLS = 21, ROWS = 21, OX = 2, OY = 6, PX = 16;  // Quadrat 16×14 bei (2,6)
+const COLOR = {
+  feature: '#17142b', eyeWhite: '#ffffff', blush: '#ff8c99',
+  zFaded: '#8575ad', zLilac: '#ccb8e6',
+};
+const SQUARE = '#ccb8e6', BG = '#141021';
+
+/* ============ Painter — 1:1-Port aus FaceExpressions.swift ============ */
+function makePainter() {
+  const px = new Map();
+  const key = (x, y) => x + ',' + y;
+  return {
+    px,
+    put(x, y, c = 'feature') { px.set(key(x, y), c); },
+    hbar(x0, x1, y, c = 'feature') { for (let x = x0; x <= x1; x++) this.put(x, y, c); },
+    rect(x0, x1, y0, y1, c = 'feature') { for (let y = y0; y <= y1; y++) this.hbar(x0, x1, y, c); },
+    clear(x0, x1, y0, y1) { for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) px.delete(key(x, y)); },
+  };
+}
+
+function paintEyes(style, p) {
+  switch (style) {
+    case 'content': case 'contentLow': {
+      const dy = style === 'contentLow' ? 1 : 0;
+      p.put(2, 3+dy); p.put(6, 3+dy); p.hbar(3, 5, 4+dy);
+      p.put(9, 3+dy); p.put(13, 3+dy); p.hbar(10, 12, 4+dy);
+      break;
+    }
+    case 'arcs':
+      p.hbar(3, 5, 3); p.put(2, 4); p.put(6, 4);
+      p.hbar(10, 12, 3); p.put(9, 4); p.put(13, 4);
+      break;
+    case 'open': case 'openLeft': case 'openRight': {
+      const pdx = style === 'openLeft' ? -1 : (style === 'openRight' ? 1 : 0);
+      p.rect(3, 6, 1, 5, 'eyeWhite'); p.rect(9, 12, 1, 5, 'eyeWhite');
+      p.rect(4+pdx, 5+pdx, 3, 4, 'feature');
+      p.rect(10+pdx, 11+pdx, 3, 4, 'feature');
+      break;
+    }
+    case 'orangeUpRight': case 'orangeCenter': case 'orangeLeft': case 'orangeRight': {
+      let px, py;
+      if (style === 'orangeUpRight')      { px = 3; py = 0; }
+      else if (style === 'orangeLeft')    { px = 0; py = 1; }
+      else if (style === 'orangeRight')   { px = 3; py = 1; }
+      else                                { px = 2; py = 1; }
+      for (const ex of [2, 9]) {
+        p.rect(ex, ex+4, 1, 5, 'eyeWhite');
+        p.clear(ex, ex, 1, 1); p.clear(ex+4, ex+4, 1, 1);
+        p.clear(ex, ex, 5, 5); p.clear(ex+4, ex+4, 5, 5);
+        for (let dy = 0; dy < 3; dy++) for (let dx = 0; dx < 2; dx++) {
+          const x = ex + px + dx, y = 1 + py + dy;
+          if (y < 1 || y > 5 || x < ex || x > ex+4) continue;
+          const corner = (y === 1 || y === 5) && (x === ex || x === ex+4);
+          if (!corner) p.put(x, y, 'feature');
+        }
+      }
+      break;
+    }
+    case 'carets':
+      p.put(4, 3); p.put(3, 4); p.put(5, 4);
+      p.put(11, 3); p.put(10, 4); p.put(12, 4);
+      break;
+  }
+}
+
+function paintMouth(style, p) {
+  switch (style) {
+    case 'smile':
+      p.put(4, 7); p.put(11, 7); p.put(5, 8); p.put(10, 8); p.hbar(6, 9, 9); break;
+    case 'smileSmall':
+      p.put(5, 8); p.put(10, 8); p.hbar(6, 9, 9); break;
+    case 'smileWide':
+      p.put(3, 7); p.put(12, 7); p.put(4, 8); p.put(11, 8); p.hbar(5, 10, 9); break;
+    case 'tiny':
+      p.hbar(7, 8, 9); break;
+    case 'oSmall':
+      p.hbar(7, 8, 7); p.put(6, 8); p.put(9, 8); p.hbar(7, 8, 9); break;
+    case 'yawnSmall':
+      p.hbar(5, 10, 7); p.hbar(5, 10, 8); p.hbar(6, 9, 9); break;
+    case 'yawnBig':
+      p.hbar(3, 12, 6); p.hbar(3, 12, 7); p.hbar(3, 12, 8);
+      p.hbar(4, 11, 9); p.hbar(5, 10, 10); p.hbar(6, 9, 11); break;
+    case 'zigzag': case 'zigzagLeft': {
+      const dx = style === 'zigzagLeft' ? -1 : 0;
+      p.hbar(5+dx, 9+dx, 8);
+      p.put(11+dx, 6); p.put(10+dx, 7); p.put(10+dx, 9); p.put(11+dx, 10); break;
+    }
+    case 'humPucker': case 'humPuckerRight': {
+      const dx = style === 'humPuckerRight' ? 1 : 0;
+      p.hbar(6+dx, 9+dx, 8);
+      p.put(5+dx, 7); p.put(5+dx, 9); break;
+    }
+    case 'smackOpen':
+      p.hbar(6, 8, 8); p.put(9, 7); p.put(9, 9); break;
+    case 'smackClosed':
+      p.hbar(6, 8, 8); p.put(9, 8); break;
+    case 'smirk':
+      p.put(11, 6); p.put(11, 7); p.put(12, 7); p.put(10, 8); p.put(10, 9);
+      p.put(8, 10); p.put(9, 10); p.put(6, 11); p.put(7, 11); break;
+    case 'snoreOpen':
+      p.hbar(6, 9, 9); break;
+    case 'blow':
+      p.rect(7, 8, 8, 9); break;
+    case 'yawnHint':
+      p.hbar(6, 9, 7); p.hbar(7, 8, 8); break;
+  }
+}
+
+function paintExtras(style, p) {
+  const zSmall = (x, y, c) => { p.hbar(x, x+2, y, c); p.put(x+1, y+1, c); p.hbar(x, x+2, y+2, c); };
+  const zBig = (x, y, c) => {
+    p.hbar(x, x+3, y, c); p.put(x+2, y+1, c); p.put(x+1, y+2, c); p.hbar(x, x+3, y+3, c);
+  };
+  switch (style) {
+    case 'zzzOne': zSmall(8, -3, 'zFaded'); break;
+    case 'zzzTwo': zSmall(8, -3, 'zFaded'); zBig(12, -5, 'zLilac'); break;
+    case 'zzzTail': zBig(12, -5, 'zLilac'); break;
+    case 'cloudNear': p.hbar(10, 11, 9, 'eyeWhite'); break;
+    case 'cloudMid':  p.hbar(12, 14, 9, 'eyeWhite'); p.hbar(12, 13, 10, 'eyeWhite'); break;
+    case 'cloudFar':  p.put(15, 10, 'eyeWhite'); p.put(16, 11, 'eyeWhite'); p.put(17, 10, 'eyeWhite'); break;
+  }
+}
+
+/* ============ Frame bauen & zeichnen ============ */
+function drawFrame(ctx, spec) {
+  ctx.fillStyle = BG;
+  ctx.fillRect(0, 0, COLS * PX, ROWS * PX);
+  ctx.fillStyle = SQUARE;
+  ctx.fillRect(OX * PX, OY * PX, 16 * PX, 14 * PX);
+
+  const dy = spec.dy || 0;
+  const p = makePainter();
+  paintEyes(spec.eyes, p);
+  paintMouth(spec.mouth, p);
+  for (const [k, c] of p.px) {
+    const [x, y] = k.split(',').map(Number);
+    ctx.fillStyle = COLOR[c];
+    ctx.fillRect((x + OX) * PX, (y + OY + dy) * PX, PX, PX);
+  }
+  if (spec.extras) {
+    const pe = makePainter();
+    paintExtras(spec.extras, pe);
+    for (const [k, c] of pe.px) {
+      const [x, y] = k.split(',').map(Number);
+      ctx.fillStyle = COLOR[c];
+      ctx.fillRect((x + OX) * PX, (y + OY) * PX, PX, PX);
+    }
+  }
+}
+
+/* ============ Timeline-Bausteine (Spiegel von FaceExpressions) ============ */
+const K = (eyes, mouth, f, extras = null) => ({ eyes, mouth, extras, f });
+const tl = (frames, dur) => frames.map(k =>
+  ({ spec: { eyes: k.eyes, mouth: k.mouth, extras: k.extras, dy: k.dy || 0 }, hold: k.f * dur }));
+const hold = (eyes, mouth, sec, extras = null, dy = 0) =>
+  [{ spec: { eyes, mouth, extras, dy }, hold: sec }];
+const seq = (...parts) => parts.flat();
+const withZzz = (steps, ex) => steps.map(s =>
+  ({ ...s, spec: { ...s.spec, extras: s.spec.extras ?? ex } }));
+
+const TL = {
+  sighBig: d => tl([K('content','oSmall',.35), K('contentLow','smileWide',.45), K('content','smile',.20)], d),
+  sighSmall: d => tl([K('content','yawnHint',.15), K('content','yawnSmall',.55), K('content','smileSmall',.30)], d),
+  yawnBig: d => tl([K('content','yawnSmall',.15), K('arcs','yawnBig',.50), K('content','yawnSmall',.15), K('content','smileSmall',.20)], d),
+  deepExhale: d => tl([K('content','oSmall',.20), K('content','blow',.15,'cloudNear'), K('content','blow',.20,'cloudMid'), K('content','smileSmall',.20,'cloudFar'), K('content','smile',.25)], d),
+  zigzagWiggle: d => tl([K('content','zigzag',.30), K('content','zigzagLeft',.20), K('content','zigzag',.20), K('content','zigzagLeft',.30)], d),
+  humWiggle: d => tl([K('content','humPucker',.30), K('content','humPuckerRight',.20), K('content','humPucker',.20), K('content','humPuckerRight',.30)], d),
+  subtleLips: d => tl([K('content','smackOpen',.30), K('content','smackClosed',.20), K('content','smackOpen',.20), K('content','smackClosed',.30)], d),
+  smackAwake: d => tl([K('arcs','zigzag',.35), K('arcs','zigzagLeft',.15), K('arcs','zigzag',.15), K('arcs','zigzagLeft',.15), K('arcs','zigzag',.20)], d),
+  eyesUp04: d => tl([K('open','smile',.30), K('openLeft','smile',.20), K('open','smile',.15), K('openRight','smile',.20), K('open','smile',.15)], d),
+  eyesUp20: (d, m = 'tiny') => tl([K('orangeUpRight',m,.50), K('orangeCenter',m,.25), K('orangeUpRight',m,.25)], d),
+  eyesUp21: (d, m = 'tiny') => tl([K('orangeCenter',m,.25), K('orangeLeft',m,.20), K('orangeCenter',m,.10), K('orangeRight',m,.20), K('orangeUpRight',m,.15), K('orangeCenter',m,.10)], d),
+  eyesUpSlow: d => tl([K('orangeCenter','smile',.28), K('orangeLeft','smile',.22), K('content','smile',.03), K('orangeRight','smile',.22), K('orangeCenter','smile',.25)], d),
+  blissWide: d => tl([K('carets','smileWide',1.0)], d),
+  blissSmall: d => tl([K('carets','smileSmall',1.0)], d),
+  sleepSmirk: d => tl([K('content','tiny',.25), K('content','smirk',.50), K('content','tiny',.25)], d),
+  sleepSmile: d => tl([K('arcs','tiny',.35), K('arcs','smileSmall',.40), K('arcs','tiny',.25)], d),
+};
+
+/* ============ Das Drehbuch für den Voice Actor ============
+   Ein kompakter ~70-s-Loop: der ganze Charakterbogen (ruhig wach →
+   einschlafen → Schlaf → aufwachen) in der Zeit, die sich jemand das
+   wirklich anschaut. Kurze Ruhe-Inseln zwischen den Sounds erhalten
+   das Gefühl von Gelassenheit. Labels = Sound-Namen aus dem VOICE-BRIEFING. */
+const lab = (label, steps) => steps.map(s => ({ ...s, label }));
+
+/* Ruhe-Bausteine: still, aber lebendig (Peek bzw. zZ im Schlaf) */
+const awakeCalm = () =>                                   // ~5 s mit Peek
+  seq(hold('content','smile',2.2), hold('open','smile',1.1), hold('content','smile',1.7));
+const awakeStill = sec => hold('content','smile',sec);     // ganz still
+const drowsyCalm = sec => hold('content','smileSmall',sec);
+
+const SCRIPT = seq(
+  /* — wach (~20 s) — */
+  lab('Awake', awakeCalm()),
+  lab('Looking around', TL.eyesUpSlow(4)),
+  lab('Awake', awakeStill(2)),
+  lab('Lip smack', TL.smackAwake(1.6)),
+  lab('Awake', awakeStill(2.5)),
+  lab('Sigh', TL.sighBig(3)),
+  lab('Awake', awakeStill(2)),
+
+  /* — müde werden & einschlafen (~11 s) — */
+  lab('Getting drowsy', drowsyCalm(2.5)),
+  lab('Yawn', TL.yawnBig(3)),
+  lab('Getting drowsy', drowsyCalm(2)),
+  lab('Falling asleep “mmh”', seq(hold('content','smile',1.0,'zzzOne'), hold('content','smile',1.4,'zzzTwo',1), hold('content','smile',1.0,'zzzTwo'))),
+
+  /* — schlafend (~25 s) — */
+  lab('Asleep', hold('content','tiny',2.5,'zzzTwo')),
+  lab('Murmur', withZzz(TL.subtleLips(3),'zzzTwo')),
+  lab('Asleep', hold('arcs','tiny',2.2,'zzzTwo')),
+  lab('Snore', seq(hold('arcs','snoreOpen',2.2,'zzzTwo'), hold('arcs','tiny',1.5,'zzzTwo'))),
+  lab('Lip smack (asleep)', withZzz(TL.zigzagWiggle(1.6),'zzzTwo')),
+  lab('Asleep', hold('content','tiny',2.2,'zzzTwo')),
+  lab('Dreaming', withZzz(TL.sleepSmirk(3.5),'zzzTwo')),
+  lab('Breath out (asleep)', seq(hold('arcs','tiny',1.0,'zzzTwo'), hold('arcs','tiny',0.7,'cloudNear'), hold('arcs','tiny',0.8,'cloudMid'), hold('arcs','tiny',0.8,'cloudFar'))),
+  lab('Asleep', seq(hold('arcs','tiny',1.5,'zzzTail'), hold('arcs','tiny',1.0))),
+
+  /* — aufwachen & zufriedenes Finale (~16 s) — */
+  lab('Waking “hmm?”', seq(hold('orangeCenter','tiny',1.2), TL.eyesUp20(3))),
+  lab('Deep exhale (relief)', TL.deepExhale(4)),
+  lab('Awake', awakeStill(1.5)),
+  lab('Hum', TL.humWiggle(3)),
+  lab('Contentment “mmm”', TL.blissWide(2.5)),
+  lab('Awake', awakeStill(2)),
+);
+
+/* ============ Player ============ */
+const canvas = document.getElementById('face');
+canvas.width = COLS * PX;
+canvas.height = ROWS * PX;
+canvas.style.width = Math.min(COLS * PX, 360) + 'px';
+const ctx = canvas.getContext('2d');
+const stateEl = document.getElementById('state');
+
+let i = 0;
+const tick = () => {
+  drawFrame(ctx, SCRIPT[i].spec);
+  stateEl.textContent = SCRIPT[i].label;
+  const holdSec = SCRIPT[i].hold;
+  i = (i + 1) % SCRIPT.length;
+  setTimeout(tick, holdSec * 1000);
+};
+tick();
+</script>
+</body>
+</html>
